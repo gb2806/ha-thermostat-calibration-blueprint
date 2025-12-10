@@ -61,9 +61,10 @@ blueprint:
     stable_time:
       name: Wartezeit bei stabiler Temperatur
       description: >
-        Wie lange sich der Wert des externen Temperatursensors nicht geändert
-        haben soll, bevor der Offset neu berechnet wird. Das verhindert zu
-        häufiges Umschalten bei schnellen Schwankungen.
+        Wie lange sich der Wert des externen Temperatursensors bzw. die angezeigte
+        Temperatur des Thermostats nicht geändert haben soll, bevor der Offset neu
+        berechnet wird. Das verhindert zu häufiges Umschalten bei schnellen
+        Schwankungen.
       default:
         hours: 0
         minutes: 2
@@ -78,8 +79,15 @@ variables:
   change_threshold: !input change_threshold
 
 trigger:
+  # Trigger 1: Externer Sensor ändert sich und ist stabil
   - platform: state
     entity_id: !input external_sensor
+    for: !input stable_time
+
+  # Trigger 2: Thermostat-Temperatur (current_temperature) ändert sich und ist stabil
+  - platform: state
+    entity_id: !input thermostat
+    attribute: current_temperature
     for: !input stable_time
 
 condition: []
