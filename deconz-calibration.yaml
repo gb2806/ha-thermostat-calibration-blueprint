@@ -1,0 +1,117 @@
+blueprint:
+  name: Thermostat-Offset per externem Sensor (mit Mindeständerung)
+  description: >
+    Passt den Offset eines Thermostats anhand eines externen Temperatursensors an.
+    Der Offset wird nur geändert, wenn sich der berechnete Wert um mehr als die
+    angegebene Schwelle in °C unterscheidet. Für deCONZ-Thermostate muss der Offset
+    üblicherweise mit 100 skaliert werden (z. B. 0,5°C = 50).
+  domain: automation
+
+  input:
+    external_sensor:
+      name: Externer Temperatursensor
+      description: >
+        Temperatursensor, der als Referenz dienen soll (z. B. ein genauerer Raum-,
+        Decken- oder Wand-Sensor). Dessen Temperatur wird mit dem Thermostat
+        abgeglichen.
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+
+    thermostat:
+      name: Thermostat
+      description: >
+        Das Thermostat, dessen Offset automatisch angepasst werden soll.
+        Bei deCONZ muss dieses ein climate-Entity sein, dessen Offset über
+        deconz.configure gesetzt werden kann.
+      selector:
+        entity:
+          domain: climate
+
+    offset_scale:
+      name: Offset-Skalierungsfaktor
+      description: >
+        Faktor, mit dem der Offset intern skaliert wird. Für deCONZ-Thermostate
+        wird der Offset in Hundertstel-Grad erwartet, daher hier 100 verwenden
+        (z. B. 0,5°C → 50). Wenn dein Thermostat den Offset direkt in °C speichert,
+        setze den Wert auf 1.
+      default: 100
+      selector:
+        number:
+          min: 1
+          max: 1000
+          step: 1
+          mode: box
+
+    change_threshold:
+      name: Mindeständerung für neuen Offset (°C)
+      description: >
+        Nur wenn sich der neu berechnete Offset um mehr als diesen Wert (in °C)
+        vom aktuellen Offset unterscheidet, wird er tatsächlich gesetzt.
+        So vermeidest du ständiges Nachregeln bei kleinen Messschwankungen.
+      default: 0.1
+      selector:
+        number:
+          min: 0.01
+          max: 5
+          step: 0.01
+          mode: box
+
+    stable_time:
+      name: Wartezeit bei stabiler Temperatur
+      description: >
+        Wie lange sich der Wert des externen Temperatursensors nicht geändert
+        haben soll, bevor der Offset neu berechnet wird. Das verhindert zu
+        häufiges Umschalten bei schnellen Schwankungen.
+      default:
+        hours: 0
+        minutes: 2
+        seconds: 0
+      selector:
+        duration: {}
+
+variables:
+  thermostat_entity: !input thermostat
+  sensor_entity: !input external_sensor
+  offset_scale: !input offset_scale
+  change_threshold: !input change_threshold
+
+trigger:
+  - platform: state
+    entity_id: !input external_sensor
+    for: !input stable_time
+
+condition: []
+
+action:
+  - variables:
+      thermo_temp: >
+        {{ state_attr(thermostat_entity, 'current_temperature') | default(0) | float }}
+      sensor_temp: >
+        {{ states(sensor_entity) | default(0) | float }}
+      current_offset_scaled: >
+        {{ state_attr(thermostat_entity, 'offset') | default(0) | float }}
+      current_offset_c: >
+        {{ (current_offset_scaled / offset_scale) | float }}
+      adjusted_temp: >
+        {{ thermo_temp - current_offset_c }}
+      new_offset_c: >
+        {{ sensor_temp - adjusted_temp }}
+      diff: >
+        {{ (new_offset_c - current_offset_c) | float }}
+      new_offset_scaled: >
+        {{ (new_offset_c * offset_scale) | round(0) | int }}
+
+  - condition: template
+    value_template: >
+      {{ diff | abs > change_threshold }}
+
+  - service: deconz.configure
+    data:
+      entity: !input thermostat
+      field: /config
+      data:
+        offset: "{{ new_offset_scaled }}"
+
+mode: single
